@@ -158,6 +158,7 @@ public class SingleNodeHandler implements ResponseHandler, Terminatable, LoadDat
 	}
 
 	public void execute() throws Exception {
+		// 从这里开始计算处理时间
 		startTime=System.currentTimeMillis();
 		ServerConnection sc = session.getSource();
 		this.isRunning = true;
@@ -166,19 +167,20 @@ public class SingleNodeHandler implements ResponseHandler, Terminatable, LoadDat
 		LOGGER.debug("rrs.getRunOnSlave() " + rrs.getRunOnSlave());
 		node.setRunOnSlave(rrs.getRunOnSlave());	// 实现 master/slave注解
 		LOGGER.debug("node.getRunOnSlave() " + node.getRunOnSlave());
-		 
+		// 之前是否获取过Connection并且Connection有效
 		if (session.tryExistsCon(conn, node)) {
 			_execute(conn);
 		} else {
 			// create new connection
 
 			MycatConfig conf = MycatServer.getInstance().getConfig();
-						
+
 			LOGGER.debug("node.getRunOnSlave() " + node.getRunOnSlave());
 			node.setRunOnSlave(rrs.getRunOnSlave());	// 实现 master/slave注解
 			LOGGER.debug("node.getRunOnSlave() " + node.getRunOnSlave());
-			 		
+			// 从config中获取DataNode
 			PhysicalDBNode dn = conf.getDataNodes().get(node.getName());
+			// 获取对应的数据库连接
 			dn.getConnection(dn.getDatabase(), sc.isAutocommit(), node, this, node);
 		}
 
@@ -252,6 +254,23 @@ public class SingleNodeHandler implements ResponseHandler, Terminatable, LoadDat
 		session.releaseConnectionIfSafe(conn, LOGGER.isDebugEnabled(), false);
 		
 		source.setTxInterrupt(errmgs);
+
+		/**
+		 * TODO: 修复全版本BUG
+		 *
+		 * BUG复现：
+		 * 1、MysqlClient:  SELECT 9223372036854775807 + 1;
+		 * 2、MyCatServer:  ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'
+		 * 3、MysqlClient: ERROR 2013 (HY000): Lost connection to MySQL server during query
+		 *
+		 * Fixed后
+		 * 1、MysqlClient:  SELECT 9223372036854775807 + 1;
+		 * 2、MyCatServer:  ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'
+		 * 3、MysqlClient: ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'
+		 *
+		 */
+		// 由于 pakcetId != 1 造成的问题
+		errPkg.packetId = 1;
 		errPkg.write(source);
 		recycleResources();
 	}
@@ -298,6 +317,12 @@ public class SingleNodeHandler implements ResponseHandler, Terminatable, LoadDat
             
 			this.affectedRows = ok.affectedRows;
 			
+			source.setExecuteSql(null);
+			// add by lian
+			// 解决sql统计中写操作永远为0
+			QueryResult queryResult = new QueryResult(session.getSource().getUser(),
+					rrs.getSqlType(), rrs.getStatement(), affectedRows, netInBytes, netOutBytes, startTime, System.currentTimeMillis(),0);
+			QueryResultDispatcher.dispatchQuery( queryResult );
 		}
 	}
 
@@ -416,7 +441,7 @@ public class SingleNodeHandler implements ResponseHandler, Terminatable, LoadDat
 		if (isDefaultNodeShowTable || isDefaultNodeShowFullTable) {
 			RowDataPacket rowDataPacket = new RowDataPacket(1);
 			rowDataPacket.read(row);
-			String table = StringUtil.decode(rowDataPacket.fieldValues.get(0), conn.getCharset());
+			String table = StringUtil.decode(rowDataPacket.fieldValues.get(0), session.getSource().getCharset());
 			if (shardingTablesSet.contains(table.toUpperCase())) {
 				return;
 			}

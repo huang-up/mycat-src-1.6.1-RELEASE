@@ -86,51 +86,72 @@ public class MySQLConnectionHandler extends BackendAsyncHandler {
 		throw new RuntimeException("offer data error!");
 	}
 
+	/**
+	 * MySQL服务端响应客户端查询请求的流程可以分为三个阶段：
+	 （第一阶段）客户端发送查询请求包COM_QUERY （command query packet），如果有结果集返回，且结果集不为空，则返回FieldCount（列数量）包；
+	 		如果结果集为空，则返回OKPacket；如果命令有错，则返回ERRPacket；如果是Load file data命令，则返回LOCAL_INFILE_Request。
+	 （第二阶段）如果有结果集返回，则先返回列集合，所有列返回完了之后，会返回EOFPacket；如果过程中出现错误，则返回错误包。
+	 （第三阶段）之后返回行记录，返回全部行记录之后，返回EOFPacket。如果有错误，回错误包。
+	 */
 	@Override
 	protected void handleData(byte[] data) {
 		switch (resultStatus) {
+		// 第一阶段
 		case RESULT_STATUS_INIT:
 			switch (data[4]) {
+			// 返回OKPacket
 			case OkPacket.FIELD_COUNT:
 				handleOkPacket(data);
 				break;
+			// 返回错误包
 			case ErrorPacket.FIELD_COUNT:
 				handleErrorPacket(data);
 				break;
+			// 返回Load Data进一步操作
 			case RequestFilePacket.FIELD_COUNT:
 				handleRequestPacket(data);
 				break;
+			// 返回结果集列数量
 			default:
+				// 记录列数量并进入第二阶段
 				resultStatus = RESULT_STATUS_HEADER;
 				header = data;
 				fields = new ArrayList<byte[]>((int) ByteUtil.readLength(data,
 						4));
 			}
 			break;
+		// 第二阶段
 		case RESULT_STATUS_HEADER:
 			switch (data[4]) {
+			// 返回错误包
 			case ErrorPacket.FIELD_COUNT:
 				resultStatus = RESULT_STATUS_INIT;
 				handleErrorPacket(data);
 				break;
+			// 返回EOF，证明列集合返回完毕，进入第三阶段
 			case EOFPacket.FIELD_COUNT:
 				resultStatus = RESULT_STATUS_FIELD_EOF;
 				handleFieldEofPacket(data);
 				break;
+			// 返回的是列集合，记录
 			default:
 				fields.add(data);
 			}
 			break;
+		// 第三阶段
 		case RESULT_STATUS_FIELD_EOF:
 			switch (data[4]) {
+			// 返回错误包
 			case ErrorPacket.FIELD_COUNT:
 				resultStatus = RESULT_STATUS_INIT;
 				handleErrorPacket(data);
 				break;
+			// 返回EOF，证明结果集返回完毕，回到第一阶段等待下一个请求的响应
 			case EOFPacket.FIELD_COUNT:
 				resultStatus = RESULT_STATUS_INIT;
 				handleRowEofPacket(data);
 				break;
+			// 返回结果集包
 			default:
 				handleRowPacket(data);
 			}

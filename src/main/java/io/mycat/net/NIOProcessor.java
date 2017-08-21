@@ -45,6 +45,11 @@ import io.mycat.util.TimeUtil;
 /**
  * @author mycat
  */
+
+/**
+ * NIOProcessor其实主要负责连接资源的管理：
+ * MyCat会定时检查前端和后端空闲连接，并清理和回收资源：*
+ */
 public final class NIOProcessor {
 	
 	private static final Logger LOGGER = LoggerFactory.getLogger("NIOProcessor");
@@ -52,6 +57,10 @@ public final class NIOProcessor {
 	private final String name;
 	private final BufferPool bufferPool;
 	private final NameableExecutor executor;
+	// 每个AbstractConnection依赖于一个NIOProcessor，每个NIOProcessor保存着多个AbstractConnection。
+	// AbstractConnection分为FrontendConnection和BackendConnection
+	// 被分别保存在frontends和backends这两个ConcurrentHashMap中。
+	// 用ConcurrentHashMap是因为NIOAcceptor和NIOConnector线程以及RW线程池都会访问这两个变量。
 	private final ConcurrentMap<Long, FrontendConnection> frontends;
 	private final ConcurrentMap<Long, BackendConnection> backends;
 	private final CommandCount commands;

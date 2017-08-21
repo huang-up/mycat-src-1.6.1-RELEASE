@@ -40,6 +40,7 @@ import io.mycat.util.TimeUtil;
 import org.slf4j.Logger; import org.slf4j.LoggerFactory;
 
 /**
+ * 就是NIO的channel的封装
  * @author mycat
  */
 public abstract class AbstractConnection implements NIOConnection {
@@ -54,11 +55,16 @@ public abstract class AbstractConnection implements NIOConnection {
 	protected volatile int charsetIndex;
 
 	protected final NetworkChannel channel;
+	// 每个AbstractConnection依赖于一个NIOProcessor，每个NIOProcessor保存着多个AbstractConnection。
+	// NIOProcessor是对AbstractConnection实现NIO读写的方法类
 	protected NIOProcessor processor;
+	// NIOHandler是处理AbstractConnection读取的数据的处理方法类
 	protected NIOHandler handler;
 
 	protected int packetHeaderSize;
 	protected int maxPacketSize;
+	// AbstractConnection的方法只对它里面的buffer进行操作，
+	// 而buffer与channel之间的交互，是通过NIOSocketWR的方法完成的
 	protected volatile ByteBuffer readBuffer;
 	protected volatile ByteBuffer writeBuffer;
 	
@@ -80,9 +86,11 @@ public abstract class AbstractConnection implements NIOConnection {
     protected final ConcurrentLinkedQueue<byte[]> compressUnfinishedDataQueue = new ConcurrentLinkedQueue<byte[]>();
 
 	private long idleTimeout;
-
+	// NIOSocketWR是执行以上方法的线程类。
 	private final SocketWR socketWR;
 
+	// AbstractConnection其实就是把Java的NetworkChannel进行封装，
+	// 同时需要依赖其他几个类来完成他所需要的操作
 	public AbstractConnection(NetworkChannel channel) {
 		this.channel = channel;
 		boolean isAIO = (channel instanceof AsynchronousChannel);
@@ -281,12 +289,13 @@ public abstract class AbstractConnection implements NIOConnection {
 	 * 读取可能的Socket字节流
 	 */
 	public void onReadData(int got) throws IOException {
-		
+		// 如果连接已经关闭，则不处理
 		if (isClosed.get()) {
 			return;
 		}
 		
 		lastReadTime = TimeUtil.currentTimeMillis();
+		// 读取到的字节小于0，表示流关闭，如果等于0，代表TCP连接关闭了
 		if (got < 0) {
 			this.close("stream closed");
             return;
@@ -299,8 +308,10 @@ public abstract class AbstractConnection implements NIOConnection {
 		processor.addNetInBytes(got);
 
 		// 循环处理字节信息
+		// readBuffer一直处于write mode，position记录最后的写入位置
 		int offset = readBufferOffset, length = 0, position = readBuffer.position();
 		for (;;) {
+			// 获取包头的包长度信息
 			length = getPacketLength(readBuffer, offset);			
 			if (length == -1) {
 				if (offset != 0) {
@@ -311,13 +322,20 @@ public abstract class AbstractConnection implements NIOConnection {
 				}
 				break;
 			}
-
+			// 如果postion小于包起始位置加上包长度，证明readBuffer不够大，需要扩容
 			if (position >= offset + length && readBuffer != null) {
 				
 				// handle this package
 				readBuffer.position(offset);				
 				byte[] data = new byte[length];
+				// 读取一个完整的包
 				readBuffer.get(data, 0, length);
+				// 处理包，每种AbstractConnection的处理函数不同
+				// 每种AbstractConnection的handler不同，FrontendConnection的handler为FrontendAuthenticator
+				// FrontendConnection会接收什么请求呢？有两种，认证请求和SQL命令请求。
+				// 只有认证成功后，才会接受SQL命令请求。
+				// FrontendAuthenticator只负责认证请求，在认证成功后，
+				// 将对应AbstractConnection的handler设为处理SQL请求的FrontendCommandHandler即可
 				handle(data);
 				
 				// maybe handle stmt_close
@@ -326,9 +344,16 @@ public abstract class AbstractConnection implements NIOConnection {
 				}
 
 				// offset to next position
+				// 记录下读取到哪里了
 				offset += length;
 				
 				// reached end
+				// 如果最后写入位置等于最后读取位置，则证明所有的处理完了，可以清空缓存和offset
+				// 否则，记录下最新的offset
+				// 由于readBufferOffset只会单线程（绑定的RW线程）修改，
+				// 但是会有多个线程访问（定时线程池的清理任务），所以设为volatile，不用CAS，
+				// 这是一个经典的用volatile代替CAS实现多线程安全访问的场景。
+
 				if (position == offset) {
 					// if cur buffer is temper none direct byte buffer and not
 					// received large message in recent 30 seconds
@@ -432,11 +457,14 @@ public abstract class AbstractConnection implements NIOConnection {
 
     @Override
 	public final void write(ByteBuffer buffer) {
-    	
+		// 首先判断是否为压缩协议
 		if (isSupportCompress()) {
+			// CompressUtil为压缩协议辅助工具类
 			ByteBuffer newBuffer = CompressUtil.compressMysqlPacket(buffer, this, compressUnfinishedDataQueue);
+			// 将要写的数据先放入写缓存队列
 			writeQueue.offer(newBuffer);
 		} else {
+			// 将要写的数据先放入写缓存队列
 			writeQueue.offer(buffer);
 		}
 
@@ -444,6 +472,9 @@ public abstract class AbstractConnection implements NIOConnection {
 		// flag is set false but not start a write request
 		// so we check again
 		try {
+			// 处理写事件，这个方法比较复杂，需要重点分析其思路
+			// 这里doNextWriteCheck() 方法调用是主要调用，所有往AbstractionConnection中的写入都会调用Abstraction.write(ByteBuffer)，
+			// 这个方法先把要写的放入缓存队列
 			this.socketWR.doNextWriteCheck();
 		} catch (Exception e) {
 			LOGGER.warn("write err:", e);
@@ -524,22 +555,24 @@ public abstract class AbstractConnection implements NIOConnection {
 	}
 
 	/**
-	 * 清理资源
+	 * 清理资源 清理连接占用的缓存资源
 	 */
 	protected void cleanup() {
 		
 		// 清理资源占用
 		if (readBuffer != null) {
+			// 回收读缓冲
 			this.recycle(readBuffer);
 			this.readBuffer = null;
 			this.readBufferOffset = 0;
 		}
 		
 		if (writeBuffer != null) {
+			// 回收写缓冲
 			recycle(writeBuffer);
 			this.writeBuffer = null;
 		}
-		
+		// 回收压缩协议栈编码解码队列
 		if (!decompressUnfinishedDataQueue.isEmpty()) {
 			decompressUnfinishedDataQueue.clear();
 		}
@@ -547,7 +580,7 @@ public abstract class AbstractConnection implements NIOConnection {
 		if (!compressUnfinishedDataQueue.isEmpty()) {
 			compressUnfinishedDataQueue.clear();
 		}
-		
+		// 回收写队列
 		ByteBuffer buffer = null;
 		while ((buffer = writeQueue.poll()) != null) {
 			recycle(buffer);

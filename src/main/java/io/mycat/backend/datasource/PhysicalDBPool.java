@@ -139,9 +139,11 @@ public class PhysicalDBPool {
 	public PhysicalDatasource getSource() {
 		
 		switch (writeType) {
+			// writeType=0，返回当前active的writeHost
 			case WRITE_ONLYONE_NODE: {
 				return writeSources[activedIndex];
 			}
+			// writeType=1，随机发到一个writeHost
 			case WRITE_RANDOM_NODE: {
 	
 				int index = Math.abs(wnrandom.nextInt(Integer.MAX_VALUE)) % writeSources.length;
@@ -173,6 +175,7 @@ public class PhysicalDBPool {
 				}
 				return result;
 			}
+			// 参数不正确
 			default: {
 				throw new java.lang.IllegalArgumentException("writeType is "
 						+ writeType + " ,so can't return one write datasource ");
@@ -425,27 +428,37 @@ public class PhysicalDBPool {
 		PhysicalDatasource theNode = null;
 		ArrayList<PhysicalDatasource> okSources = null;
 		switch (banlance) {
-		case BALANCE_ALL_BACK: {			
+		// 所有读写节点参与read请求的负载均衡，除了当前活跃的写节点，balance=1
+		case BALANCE_ALL_BACK: {
+			// 返回所有写节点和符合条件的读节点，不包括当前的写节点
 			// all read nodes and the standard by masters
 			okSources = getAllActiveRWSources(true, false, checkSlaveSynStatus());
 			if (okSources.isEmpty()) {
+				// 如果结果即为空，返回当前写节点
 				theNode = this.getSource();
 				
 			} else {
+				// 不为空，随机选一个
 				theNode = randomSelect(okSources);
 			}
 			break;
 		}
+		// 所有读写节点参与read请求的负载均衡，balance=2
 		case BALANCE_ALL: {
+			// 返回所有写节点和符合条件的读节点
 			okSources = getAllActiveRWSources(true, true, checkSlaveSynStatus());
+			// 随机选一个
 			theNode = randomSelect(okSources);
 			break;
 		}
         case BALANCE_ALL_READ: {
-            okSources = getAllActiveRWSources(false, false, checkSlaveSynStatus());
-            theNode = randomSelect(okSources);
+			// 返回所有符合条件的读节点
+			okSources = getAllActiveRWSources(false, false, checkSlaveSynStatus());
+			// 随机取一个
+			theNode = randomSelect(okSources);
             break;
         }
+		// 不做负载均衡，balance=0或其他不为以上的值
 		case BALANCE_NONE:
 		default:
 			// return default write data source
@@ -535,7 +548,8 @@ public class PhysicalDBPool {
 			return false;
 		}
 	} 
-    
+
+	// 检查是否判断主从延迟
 	private boolean checkSlaveSynStatus() {
 		return ( dataHostConfig.getSlaveThreshold() != -1 )
 				&& (dataHostConfig.getSwitchType() == DataHostConfig.SYN_STATUS_SWITCH_DS);
@@ -627,36 +641,43 @@ public class PhysicalDBPool {
 		
 		int curActive = activedIndex;
 		ArrayList<PhysicalDatasource> okSources = new ArrayList<PhysicalDatasource>(this.allDs.size());
-		
+		// 判断写节点
 		for (int i = 0; i < this.writeSources.length; i++) {
 			PhysicalDatasource theSource = writeSources[i];
+			// 判断写节点是否是active，可能reload会置为inactive，可能多个写节点但是只有一个是活跃在用的（writeType=0）
 			if (isAlive(theSource)) {// write node is active
-                
+				// 负载均衡策略是否包含写节点
 				if (includeWriteNode) {					
 					boolean isCurWriteNode = ( i == curActive );
+					// 判断是否包含当前活跃的写入节点
 					if ( isCurWriteNode && includeCurWriteNode == false) {
 						// not include cur active source
-					} else if (filterWithSlaveThreshold && theSource.isSalveOrRead() ) {	
+					} else if (filterWithSlaveThreshold && theSource.isSalveOrRead() ) {
+						//如果包含从节点同步延迟限制，检查同步状态
 						boolean selected = canSelectAsReadNode(theSource);
 						if ( selected ) {
 							okSources.add(theSource);
 						} else {
+							// 如果同步状态不对，则不添加这个写节点
 							continue;
 						}							
 					} else {
 						okSources.add(theSource);
 					}
                 }
-                
-				if (!readSources.isEmpty()) {					
+				// 检查theSource对应的读节点
+				if (!readSources.isEmpty()) {
+					// 检查theSource对应的读节点（从节点）
 					// check all slave nodes
 					PhysicalDatasource[] allSlaves = this.readSources.get(i);
 					if (allSlaves != null) {
 						for (PhysicalDatasource slave : allSlaves) {
-							if (isAlive(slave)) {								
+							if (isAlive(slave)) {
+								// 如果包含从节点同步延迟限制，检查同步状态
 								if (filterWithSlaveThreshold) {
 									boolean selected = canSelectAsReadNode(slave);
 									if ( selected ) {
+										// 如果同步状态正确，则把读节点加入
 										okSources.add(slave);
 									} else {
 										continue;

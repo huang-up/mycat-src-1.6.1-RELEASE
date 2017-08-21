@@ -41,8 +41,14 @@ public final class MycatStartup {
     private static final String dateFormat = "yyyy-MM-dd HH:mm:ss";
     private static final Logger LOGGER = LoggerFactory.getLogger(MycatStartup.class);
     public static void main(String[] args) {
+        // 是否启用zk配置，/myid.properties中的loadZk属性决定，默认不启用，从本地xml文件中读取配置
         //use zk ?
         ZkConfig.getInstance().initZk();
+        /**
+         * MycatServer.getInstance()：获取MyCat实例，其实就是读取配置文件，并验证正确性等
+         * server.beforeStart()：获取环境变量，日志配置
+         * server.startup()：启动MyCat，启动线程，初始化线程池和连接池等。
+         */
         try {
             String home = SystemConfig.getHomePath();
             if (home == null) {

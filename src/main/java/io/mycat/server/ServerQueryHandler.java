@@ -59,7 +59,7 @@ public class ServerQueryHandler implements FrontendQueryHandler {
 		//
 		int rs = ServerParse.parse(sql);
 		int sqlType = rs & 0xff;
-		
+		// 针对每种command，都有不同的handler和处理方式。
 		switch (sqlType) {
 		//explain sql
 		case ServerParse.EXPLAIN:

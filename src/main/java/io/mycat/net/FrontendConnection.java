@@ -49,6 +49,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
+ * 前端连接包括ServerConnection(服务端连接)和ManagerConnection(管理端连接)。
+ * 前端链接不会直接创建，而是通过工厂创建
  * @author mycat
  */
 public abstract class FrontendConnection extends AbstractConnection {
@@ -86,7 +88,9 @@ public abstract class FrontendConnection extends AbstractConnection {
 		this.host = remoteAddr.getHostString();
 		this.port = localAddr.getPort();
 		this.localPort = remoteAddr.getPort();
-		this.handler = new FrontendAuthenticator(this);
+		// 前端连接建立，需要先验证其权限，所以，handler首先设置为FrontendAuthenticator
+		// 等到验证成功，handler会被设置成FrontendCommandHandler
+		this.handler = new FrontendAuthenticatorHandler(this);
 	}
 
 	public long getId() {
@@ -206,7 +210,9 @@ public abstract class FrontendConnection extends AbstractConnection {
 		err.message = encodeString(msg, charset);
 		err.write(this);
 	}
-	
+
+	// 在command packet被解析出是initDB类型的请求时（其实就是用户发送的查询语句为“use XXX”），
+	// 会调用此方法进行处理，同时，这些方法都是被RW线程执行的
 	public void initDB(byte[] data) {
 		
 		MySQLMessage mm = new MySQLMessage(data);
@@ -223,8 +229,9 @@ public abstract class FrontendConnection extends AbstractConnection {
 			writeErrMessage(ErrorCode.ER_ACCESS_DENIED_ERROR, "Access denied for user '" + user + "'");
 			return;
 		}
-		
+		// 从FrontedPrivilege中验证用户是否有权限访问这个逻辑库，如果有就把当前连接的逻辑库设为用户请求的逻辑库
 		Set<String> schemas = privileges.getUserSchemas(user);
+		// 默认有访问权限
 		if (schemas == null || schemas.size() == 0 || schemas.contains(db)) {
 			this.schema = db;
 			write(writeToBuffer(OkPacket.OK, allocate()));
@@ -287,7 +294,7 @@ public abstract class FrontendConnection extends AbstractConnection {
 		if (LOGGER.isDebugEnabled()) {
 			LOGGER.debug(new StringBuilder().append(this).append(" ").append(sql).toString());
 		}
-		
+		// 移除末尾';'
 		// remove last ';'
 		if (sql.endsWith(";")) {
 			sql = sql.substring(0, sql.length() - 1);
@@ -327,6 +334,7 @@ public abstract class FrontendConnection extends AbstractConnection {
 		String sql = null;		
 		try {
 			MySQLMessage mm = new MySQLMessage(data);
+			// 从第六字节开始读取|read from the 6th byte
 			mm.position(5);
 			sql = mm.readString(charset);
 		} catch (UnsupportedEncodingException e) {
@@ -438,9 +446,11 @@ public abstract class FrontendConnection extends AbstractConnection {
 			hs.serverCharsetIndex = (byte) (charsetIndex & 0xff);
 			hs.serverStatus = 2;
 			hs.restOfScrambleBuff = rand2;
+			// 异步写
 			hs.write(this);
 
 			// asynread response
+			// 异步读取并处理，这个与RW线程中的asynRead()相同，之后客户端收到握手包返回AuthPacket, 可删除??
 			this.asynRead();
 		}
 	}

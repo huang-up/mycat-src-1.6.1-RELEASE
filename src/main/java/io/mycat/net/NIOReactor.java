@@ -35,12 +35,9 @@ import org.slf4j.Logger; import org.slf4j.LoggerFactory;
 
 /**
  * 网络事件反应器
- * 
- * <p>
- * Catch exceptions such as OOM so that the reactor can keep running for response client!
- * </p>
- * @since 2016-03-30
- * 
+ * Reactor模式的NIO，处理并转发请求到RW线程，
+ * 其实就是把对应AbstractConnection（就是NIO的channel的封装）,
+ * 注册到RW线程的selector上，只注册读标记；
  * @author mycat, Uncle-pan
  * 
  */
@@ -58,8 +55,23 @@ public final class NIOReactor {
 		new Thread(reactorR, name + "-RW").start();
 	}
 
+	/**
+	 * Reactor接收到的请求有两种，前端的SQL请求，还有后端的结果
+	 * 但是这两种都不能直接转发，前端的SQL请求需要经过SQL解析等业务步骤才能写到后端，
+	 * 后端的结果也需要经过业务处理才能写到前端。
+	 * 所以只要执行业务步骤的线程去注册写标记，Reactor只要在检查到写标记后，去写之后，取消标记即可
+	 * @param c 前端AbstractConnection还有后端AbstractConnection
+	 */
 	final void postRegister(AbstractConnection c) {
+		/**
+		 * 为什么放入RW线程的注册队列，而不是直接注册呢？
+		 * 如果是直接注册，那么就是NIOAcceptor这个线程负责注册，这里就会有锁竞争，
+		 * 因为NIOAcceptor这个线程和每个RW线程会去竞争selector的锁。这样NIOAcceptor就不能高效的处理连接。
+		 * 所以，更好的方式是将FrontendConnection放入RW线程的注册队列，之后让RW线程自己完成注册工作。
+		 */
+		// RW线程的注册队列
 		reactorR.registerQueue.offer(c);
+		// 唤醒RW线程的selector
 		reactorR.selector.wakeup();
 	}
 
@@ -71,6 +83,10 @@ public final class NIOReactor {
 		return reactorR.reactCount;
 	}
 
+	/**
+	 * RW线程，负责执行NIO的channel读写，
+	 * 这里channel封装成了AbstractConnection
+	 */
 	private final class RW implements Runnable {
 		private final Selector selector;
 		private final ConcurrentLinkedQueue<AbstractConnection> registerQueue;
@@ -89,6 +105,8 @@ public final class NIOReactor {
 				++reactCount;
 				try {
 					selector.select(500L);
+					// 从注册队列中取出AbstractConnection
+					// 注册读事件
 					register(selector);
 					keys = selector.selectedKeys();
 					for (SelectionKey key : keys) {
@@ -97,9 +115,12 @@ public final class NIOReactor {
 							Object att = key.attachment();
 							if (att != null) {
 								con = (AbstractConnection) att;
+								// 监听到有效读
 								if (key.isValid() && key.isReadable()) {
 									try {
-										con.asynRead();
+										// 异步读取数据并处理数据
+										// heartbeat  select user() 走 MySQLConnectionHandler??
+ 										con.asynRead();
 									} catch (IOException e) {
                                         con.close("program err:" + e.toString());
 										continue;
@@ -110,6 +131,7 @@ public final class NIOReactor {
 									}
 								}
 								if (key.isValid() && key.isWritable()) {
+									//异步写数据??
 									con.doNextWriteCheck();
 								}
 							} else {
@@ -156,7 +178,11 @@ public final class NIOReactor {
 			}
 			while ((c = registerQueue.poll()) != null) {
 				try {
+					// 注册读事件
 					((NIOSocketWR) c.getSocketWR()).register(selector);
+					// 连接注册，对于FrontendConnection是发送HandshakePacket并异步读取响应
+					// 响应为AuthPacket，读取其中的信息，验证用户名密码等信息，如果符合条件
+					// 则发送OkPacket
 					c.register();
 				} catch (Exception e) {
 					c.close("register err" + e.toString());

@@ -92,20 +92,24 @@ public class PhysicalDBNode {
 	public void getConnection(String schema,boolean autoCommit, RouteResultsetNode rrs,
 							ResponseHandler handler, Object attachment) throws Exception {
 		checkRequest(schema);
+		// 检查数据库连接池是否初始化成功，因为有reload命令
 		if (dbPool.isInitSuccess()) {
 			LOGGER.debug("rrs.getRunOnSlave() " + rrs.getRunOnSlave());
+			// 根据是否能在读节点上运行获取连接，一般是判断是否为读请求，并且读请求不在事务中
 			if(rrs.getRunOnSlave() != null){		// 带有 /*db_type=master/slave*/ 注解
 				// 强制走 slave
 				if(rrs.getRunOnSlave()){			
 					LOGGER.debug("rrs.isHasBlanceFlag() " + rrs.isHasBlanceFlag());
 					if (rrs.isHasBlanceFlag()) {		// 带有 /*balance*/ 注解(目前好像只支持一个注解...)
+						// 根据负载均衡策略选择合适的后端连接
 						dbPool.getReadBanlanceCon(schema,autoCommit,handler, attachment, this.database);
 					}else{	// 没有 /*balance*/ 注解
 						LOGGER.debug("rrs.isHasBlanceFlag()" + rrs.isHasBlanceFlag());
 						if(!dbPool.getReadCon(schema, autoCommit, handler, attachment, this.database)){
 							LOGGER.warn("Do not have slave connection to use, use master connection instead.");
+							// 直接选择当前连接池中的的后端连接
 							PhysicalDatasource writeSource=dbPool.getSource();
-							//记录写节点写负载值
+							// 记录写节点写负载值
 							writeSource.setWriteCount();
 							writeSource.getConnection(schema,
 									autoCommit, handler, attachment);

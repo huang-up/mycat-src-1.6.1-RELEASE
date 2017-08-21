@@ -168,7 +168,7 @@ public class MySQLConnection extends BackendAIOConnection {
 			MySQLConnectionHandler theHandler = (MySQLConnectionHandler) handler;
 			theHandler.connectionError(t);
 		} else {
-			((MySQLConnectionAuthenticator) handler).connectionError(this, t);
+			((MySQLConnectionAuthenticatorHandler) handler).connectionError(this, t);
 		}
 	}
 

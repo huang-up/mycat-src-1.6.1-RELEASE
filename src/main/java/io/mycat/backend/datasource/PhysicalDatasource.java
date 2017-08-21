@@ -369,8 +369,9 @@ public abstract class PhysicalDatasource {
 	}
 
 	private void createNewConnection(final ResponseHandler handler,
-			final Object attachment, final String schema) throws IOException {		
-		// aysn create connection
+			final Object attachment, final String schema) throws IOException {
+		// 异步创建连接，将连接的handler绑定为DelegateResponseHandler
+		// aysn create connection	// 异步调用工厂方法创建后端连接，这里为MySQLConnection
 		MycatServer.getInstance().getBusinessExecutor().execute(new Runnable() {
 			public void run() {
 				try {
@@ -405,6 +406,7 @@ public abstract class PhysicalDatasource {
 			return;	
 			
 		} else {
+			// 如果为空，新建连接
 			int activeCons = this.getActiveCount();// 当前最大活动连接
 			if (activeCons + 1 > size) {// 下一个连接大于最大连接数
 				LOGGER.error("the max activeConnnections size can not be max than maxconnections");
@@ -417,19 +419,22 @@ public abstract class PhysicalDatasource {
 	}
 
 	private void returnCon(BackendConnection c) {
-		
+		// 清空连接的Attachment
 		c.setAttachment(null);
+		// 设置为未使用
 		c.setBorrowed(false);
+		// 更新上次使用时间，用于清理空闲连接
 		c.setLastTime(TimeUtil.currentTimeMillis());
+		// 获取连接池对应的队列
 		ConQueue queue = this.conMap.getSchemaConQueue(c.getSchema());
-
+		// 按照是否Autocommit分类归还连接
 		boolean ok = false;
 		if (c.isAutocommit()) {
 			ok = queue.getAutoCommitCons().offer(c);
 		} else {
 			ok = queue.getManCommitCons().offer(c);
 		}
-		
+		//归还失败，关闭连接，记录
 		if (!ok) {
 
 			LOGGER.warn("can't return to pool ,so close con " + c);

@@ -26,7 +26,8 @@ package io.mycat.backend.mysql.nio.handler;
 import io.mycat.memory.unsafe.row.UnsafeRow;
 import io.mycat.sqlengine.mpp.*;
 
-import org.slf4j.Logger; import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.mycat.MycatServer;
 import io.mycat.backend.BackendConnection;
@@ -301,6 +302,17 @@ public class MultiNodeQueryHandler extends MultiNodeHandler implements LoadDataR
 				} finally {
 					lock.unlock();
 				}
+			}
+
+
+			// add by lian
+			// 解决sql统计中写操作永远为0
+			execCount++;
+			if (execCount == rrs.getNodes().length) {
+				source.setExecuteSql(null);  //完善show @@connection.sql 监控命令.已经执行完的sql 不再显示
+				QueryResult queryResult = new QueryResult(session.getSource().getUser(),
+						rrs.getSqlType(), rrs.getStatement(), selectRows, netInBytes, netOutBytes, startTime, System.currentTimeMillis(),0);
+				QueryResultDispatcher.dispatchQuery( queryResult );
 			}
 		}
 	}

@@ -61,6 +61,7 @@ public class XMLRuleLoader {
 		this.tableRules = new HashMap<String, TableRuleConfig>();
 		//function名 -> 具体分片算法
 		this.functions = new HashMap<String, AbstractPartitionAlgorithm>();
+		// 默认为：/rule.dtd和/rule.xml
 		load(DEFAULT_DTD, ruleFile == null ? DEFAULT_XML : ruleFile);
 	}
 

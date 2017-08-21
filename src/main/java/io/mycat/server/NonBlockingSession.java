@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * @author mycat
+ * Session主要处理事务，多节点转发协调等，由不同的ResponseHandler实现
  * @author mycat
  */
 public class NonBlockingSession implements Session {
@@ -74,11 +74,18 @@ public class NonBlockingSession implements Session {
         commitHandler = new CommitNodeHandler(this);
     }
 
+    /**
+     * 首先，取得源端连接方法FrontendConnection getSource();，
+     * 其实就是NonBlockingSession在创建时就已绑定一个连接，谁会调用这个方法取得源端链接呢?
+     * 主要有各种查询的handler还有SQLengine会去调用。因为处理无论返回什么结果，都需要返回给源端
+     */
     @Override
     public ServerConnection getSource() {
         return source;
     }
 
+    // 取得当前目标端数量。
+    // 根据目标端的数量不同会用不同的handler处理转发SQL和合并结果
     @Override
     public int getTargetCount() {
         return target.size();
@@ -103,6 +110,7 @@ public class NonBlockingSession implements Session {
     @Override
     public void execute(RouteResultset rrs, int type) {
 
+        // 清理之前处理用的资源,每次一个Session执行SQL时，会先清理handler使用的资源
         // clear prev execute resources
         clearHandlesResources();
         if (LOGGER.isDebugEnabled()) {
@@ -113,13 +121,16 @@ public class NonBlockingSession implements Session {
         // 检查路由结果是否为空
         RouteResultsetNode[] nodes = rrs.getNodes();
         if (nodes == null || nodes.length == 0 || nodes[0].getName() == null || nodes[0].getName().equals("")) {
+            // 如果为空，则表名有误，提示客户端
             source.writeErrMessage(ErrorCode.ER_NO_DB_ERROR,
                     "No dataNode found ,please check tables defined in schema:" + source.getSchema());
             return;
         }
         boolean autocommit = source.isAutocommit();
         final int initCount = target.size();
+        // 如果路由结果个数为1，则为单点查询或事务
         if (nodes.length == 1) {
+            // 使用SingleNodeHandler处理单点查询或事务
             singleNodeHandler = new SingleNodeHandler(rrs, this);
             if (this.isPrepared()) {
                 singleNodeHandler.setPrepared(true);
@@ -137,7 +148,8 @@ public class NonBlockingSession implements Session {
             }
 
         } else {
-
+            // 如果路由结果>1，则为多点查询或事务
+            // 使用multiNodeHandler处理多点查询或事务
             multiNodeHandler = new MultiNodeQueryHandler(type, rrs, autocommit, this);
             if (this.isPrepared()) {
                 multiNodeHandler.setPrepared(true);

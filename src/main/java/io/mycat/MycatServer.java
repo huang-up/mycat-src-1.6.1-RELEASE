@@ -344,6 +344,15 @@ public class MycatServer {
 		timerExecutor = ExecutorUtil.create("Timer", system.getTimerExecutor());
 		listeningExecutorService = MoreExecutors.listeningDecorator(businessExecutor);
 
+		// 每个MyCat实例会初始化processors个NIOProcessor，
+		// 每个NIOProcessor公用同一个bufferPool和businessExecutor。
+
+		// bufferPool是缓冲池，BufferPool这个类负责缓冲统一管理
+		// businessExecutor如之前所述，是业务线程池。
+
+		// NIOProcessor被池化，很简单，就是保存到数组中，
+		// 通过MyCatServer的nextProcessor()方法轮询获取一个NIOProcessor，
+		// 之后每个AbstractConnection通过setNIOProcessor方法，设置NIOProcessor。
 		for (int i = 0; i < processors.length; i++) {
 			processors[i] = new NIOProcessor("Processor" + i, bufferPool,
 					businessExecutor);
@@ -741,6 +750,7 @@ public class MycatServer {
 					public void run() {
 						try {
 							for (NIOProcessor p : processors) {
+								// 检查前端连接,，回收空闲资源
 								p.checkFrontCons();
 							}
 						} catch (Exception e) {

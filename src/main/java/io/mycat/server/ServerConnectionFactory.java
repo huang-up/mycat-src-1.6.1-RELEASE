@@ -45,10 +45,14 @@ public class ServerConnectionFactory extends FrontendConnectionFactory {
         ServerConnection c = new ServerConnection(channel);
         MycatServer.getInstance().getConfig().setSocketParams(c, true);
         c.setPrivileges(MycatPrivileges.instance());
+        // 每个新的ServerConnection都会绑定
+        // 一个新的ServerQueryHandler负责处理sql指令
         c.setQueryHandler(new ServerQueryHandler(c));
+        // 一个ServerLoadDataInfileHandler负责处理文件载入命令
         c.setLoadDataInfileHandler(new ServerLoadDataInfileHandler(c));
         c.setPrepareHandler(new ServerPrepareHandler(c));
         c.setTxIsolation(sys.getTxIsolation());
+        // 一个session负责处理事务
         c.setSession2(new NonBlockingSession(c));
         return c;
     }

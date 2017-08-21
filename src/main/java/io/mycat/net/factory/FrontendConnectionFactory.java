@@ -31,6 +31,7 @@ import io.mycat.MycatServer;
 import io.mycat.net.FrontendConnection;
 
 /**
+ * 前端连接工厂包括ServerConnectionFactory(服务端连接工厂)和ManagerConnectionFactory(管理端连接工厂)
  * @author mycat
  */
 public abstract class FrontendConnectionFactory {

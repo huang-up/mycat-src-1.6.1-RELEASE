@@ -60,6 +60,7 @@ public class FrontendCommandHandler implements NIOHandler
             }
             return;
         }
+        // 根据CommandPacket的第五字节判断command类型，不同类型有不同的处理。
         switch (data[4])
         {
             case MySQLPacket.COM_INIT_DB:
