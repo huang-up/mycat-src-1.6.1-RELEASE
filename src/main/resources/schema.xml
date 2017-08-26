@@ -10,6 +10,7 @@
 			with any table whose sharding node is in the same data node -->
 		<table name="company" primaryKey="ID" type="global" dataNode="dn1,dn2,dn3" />
 		<table name="goods" primaryKey="ID" type="global" dataNode="dn1,dn2" />
+		<table name="testblobandbigdecimal" primaryKey="ID" type="global" dataNode="dn1,dn2" />
 		<!-- random sharding using mod sharind rule -->
 		<table name="hotnews" primaryKey="ID" autoIncrement="true" dataNode="dn1,dn2,dn3"
 			   rule="mod-long" />

@@ -2,6 +2,7 @@ package io.mycat.backend.jdbc;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.*;
 import java.util.*;
@@ -339,7 +340,7 @@ public class JDBCConnection implements BackendConnection {
 			if(error.message!=null){
 			    err = new String(error.message);
 			}
-			LOGGER.error("sql execute error, "+ err +", "+ e);
+			LOGGER.error("sql execute error, "+ err , e);
 			this.respHandler.errorResponse(error.writeToBytes(sc), this);
 		}
 		finally {
@@ -665,8 +666,19 @@ public class JDBCConnection implements BackendConnection {
 				RowDataPacket curRow = new RowDataPacket(colunmCount);
 				for (int i = 0; i < colunmCount; i++) {
 					int j = i + 1;
-					curRow.add(StringUtil.encode(rs.getString(j),
-							sc.getCharset()));
+					if(MysqlDefs.isBianry((byte) fieldPks.get(i).type)) {
+							curRow.add(rs.getBytes(j));
+					} else if(fieldPks.get(i).type == MysqlDefs.FIELD_TYPE_DECIMAL ||
+							fieldPks.get(i).type == (MysqlDefs.FIELD_TYPE_NEW_DECIMAL - 256)) { // field type is unsigned byte
+						// ensure that do not use scientific notation format
+						BigDecimal val = rs.getBigDecimal(j);
+						curRow.add(StringUtil.encode(val != null ? val.toPlainString() : null,
+								sc.getCharset()));
+					} else {
+						   curRow.add(StringUtil.encode(rs.getString(j),
+								   sc.getCharset()));
+					}
+
 				}
 				curRow.packetId = ++packetId;
 				byteBuf = curRow.write(byteBuf, sc, false);
@@ -676,6 +688,8 @@ public class JDBCConnection implements BackendConnection {
 				byteBuf.clear();
 				this.respHandler.rowResponse(row, this);
 			}
+
+			fieldPks.clear();
 
 			// end row
 			eofPckg = new EOFPacket();
